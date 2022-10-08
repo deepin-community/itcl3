@@ -1,0 +1,4 @@
+usr/include/itcl*/*
+usr/lib/*/libitcl*.a
+usr/lib/*/libitcl*.so
+usr/lib/*/*.sh

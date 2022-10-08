@@ -1,0 +1,3 @@
+usr/lib/tcltk/*/*
+usr/lib/*/libitcl*.so.*
+usr/share/tcltk/*/*

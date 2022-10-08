@@ -1,0 +1,89 @@
+#!/usr/bin/make -f
+
+vmajor=$(shell dpkg-parsechangelog | grep ^Version: | sed 's/[^0-9]*\([0-9]*\).*/\1/')
+vminor=$(shell dpkg-parsechangelog | grep ^Version: | sed 's/[^0-9]*[0-9]*\.\([0-9]*\).*/\1/')
+v=$(vmajor).$(vminor)
+v1=$(vmajor).$(shell expr $(vminor) + 1)
+dtmp=$(shell pwd)/debian/tmp
+
+tclv=8.6
+
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+include /usr/share/dpkg/architecture.mk
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		       --includedir=/usr/include/itcl$(vmajor) \
+		       --enable-shared \
+		       --enable-threads \
+		       --with-tcl=/usr/lib/$(DEB_HOST_MULTIARCH)/tcl$(tclv)
+
+override_dh_auto_build:
+	$(MAKE) LIBS="-Wl,-soname,\$$@.1"
+
+ovarride_dh_clean:
+	[ ! -f Makefile ] || $(MAKE) clean
+	[ ! -f Makefile ] || $(MAKE) distclean
+	#
+	rm -f itclConfig.sh pkgIndex.tcl
+
+override_dh_auto_install:
+	$(MAKE) prefix=$(dtmp)/usr \
+		exec_prefix=$(dtmp)/usr \
+		includedir=$(dtmp)/usr/include/itcl$(vmajor) \
+		install
+	#
+	# Fix up the itcl libraries.
+	mv $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)/itcl*/libitcl$(v).so $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)/libitcl$(v).so.1
+	mv $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)/itcl*/*.a $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)
+	ln -sf libitcl$(v).so.1 $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)/libitcl$(v).so
+	#  (itclConfig.sh doesn't get installed at all, so we install it here)
+	sed -e "s:^\(\(ITCL\|itcl\)_\(BUILD_\)\?LIB_SPEC\)=.*$$:\1='-L/usr/lib/$(DEB_HOST_MULTIARCH) -litcl$(v)':" \
+	    -e "s:^\(\(ITCL\|itcl\)_\(BUILD_\)\?STUB_LIB_SPEC\)=.*$$:\1='-L/usr/lib/$(DEB_HOST_MULTIARCH) -litclstub$(v)':" \
+	    -e "s:^\(\(ITCL\|itcl\)_\(BUILD_\)\?STUB_LIB_PATH\)=.*$$:\1=/usr/lib/$(DEB_HOST_MULTIARCH)/libitclstub$(v).a:" \
+	    -e "s:^\(\(ITCL\|itcl\)_SRC_DIR\)=.*$$:\1='/usr/include/itcl$(vmajor)/itcl-private':" \
+	    -e "s:^\(\(ITCL\|itcl\)_LIB_FILE\)=.*$$:\1=libitcl$(v).so.1:" \
+	    -e "s:^\(\(ITCL\|itcl\)_STUB_LIB_FILE\)=.*$$:\1=libitclstub$(v).a:" \
+	    -e "s:^\(\(ITCL\|itcl\)_VERSION\)=.*$$:\1='$(v)':" \
+	    itclConfig.sh > $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)/itclConfig.sh
+	#
+	# Move the Tcl library to /usr/lib/tcltk/$(DEB_HOST_MULTIARCH)
+	install -d -m 755 $(dtmp)/usr/share/tcltk/itcl$(v)
+	mv $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)/itcl$(v)/itcl.tcl $(dtmp)/usr/share/tcltk/itcl$(v)
+	install -d -m 755 $(dtmp)/usr/lib/tcltk/$(DEB_HOST_MULTIARCH)
+	mv $(dtmp)/usr/lib/$(DEB_HOST_MULTIARCH)/itcl$(v) $(dtmp)/usr/lib/tcltk/$(DEB_HOST_MULTIARCH)
+	#
+	# Fix up the pkgIndex.tcl
+	sed -i -e's/\.so/.so.1/' -e's/\$$dir/\/usr lib $(DEB_HOST_MULTIARCH)/' \
+	    $(dtmp)/usr/lib/tcltk/$(DEB_HOST_MULTIARCH)/itcl$(v)/pkgIndex.tcl
+	#
+	# Fix up the include files.
+	install -d $(dtmp)/usr/include/itcl$(vmajor)/itcl-private/generic
+	cp generic/*.h $(dtmp)/usr/include/itcl$(vmajor)/itcl-private/generic
+	#
+	# Fix up the manpages.
+	mv $(dtmp)/usr/share/man/mann $(dtmp)/usr/share/man/man3
+	#
+	cd $(dtmp)/usr/share/man/man3 && \
+	  for i in *.n ; do \
+	    sed -i -e's/^\.TH \([^ ]\+\) n /.TH \1 3itcl /' $$i ; \
+	    mv $$i `echo $$i | sed -e 's/\.n/\.3itcl/'` ; \
+          done
+
+override_dh_link:
+	rm -rf debian/itcl$(vmajor)-dev/usr/share/doc/itcl$(vmajor)-dev
+	dh_link
+
+override_dh_makeshlibs:
+	dh_makeshlibs -a -V 'itcl$(vmajor) (>= $(v)~), itcl$(vmajor) (<< $(v1)~)'
+
+get-orig-source:
+	wget -O itcl3_3.4.3.orig.tar.gz \
+	     http://prdownloads.sourceforge.net/incrtcl/itcl3.4.3.tar.gz
+
+.PHONY: override_dh_auto_configure override_dh_auto_build override_dh_clean \
+	override_dh_auto_install override_dh_makeshlibs override_dh_link get-orig-source
